@@ -45,7 +45,7 @@ jobs:
           git config user.email "ankit.kumar9.ext@bayer.com"
 
           git add textfolder/timestamp.txt
-          git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
+          git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit."
           git push
           
   
