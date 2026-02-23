@@ -1,0 +1,65 @@
+name: Create folder & file
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+jobs:
+  create-folder:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+
+      - name: Create folder
+        run: |
+          mkdir -p textfolder
+          echo "This file contains zone time and date of push & pull"> textfolder/timestamp.txt
+          
+
+      - name: Commit changes
+        run: |
+          git config user.name "Ankit-Kumar-Bayer"
+          git config user.email "ankit.kumar9.ext@bayer.com"
+
+          git add textfolder/timestamp.txt
+          git commit -m "Create folder textfolder in my-app"
+          git push
+          
+  write-timestamp:
+    runs-on: ubuntu-latest
+    
+    env:
+      Zone: "Asia/Kolkata"
+      
+    steps:
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Write timestamp and event info
+        run: |
+          export TZ="${Zone}"
+          NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
+          echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
+          echo "Repository: ${{ github.repository}}" >> textfolder/timestamp.txt
+          echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
+          echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
+          echo "Triggered at (IST): ${NOW}" >> textfolder/timestamp.txt
+          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
+          
+      - name: Commit changes
+        run: |
+          git config user.name "Ankit-Kumar-Bayer"
+          git config user.email "ankit.kumar9.ext@bayer.com"
+
+          git add textfolder/timestamp.txt
+          git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
+          git push
+          
+        
+
+

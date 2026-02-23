@@ -1,0 +1,145 @@
+name: Test Project
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+  #MIN HOUR DAY MONTH WEEKDAY
+  #12:00 IST → 06:30 UTC → cron: '30 6 * * *'
+  schedule:
+    # Daily at 09:00 IST (UTC+5:30) -> 03:30 UTC
+    - cron: '30 3 * * *'
+
+permissions:
+  contents: write
+
+env:
+  Global_Var: "Global Workflow Variable"
+
+
+jobs:
+  
+
+  ZODA:
+    runs-on: ubuntu-latest
+    env:
+      Zone: "Asia/Kolkata"
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+
+      - name: Create folder
+        run: |
+          
+          if [ -d "textfolder" ]; then
+            echo "File and Folder Exist!"
+          else
+            mkdir -p textfolder
+            echo "This file contains zone time, date and event"> textfolder/timestamp.txt
+            echo "File and Folder Created Successfully!"
+          fi
+          
+
+      - name: Write timestamp and event info
+        run: |
+          TZ="${Zone}"
+          NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
+          echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
+          echo "Repository: ${{ github.repository}}" >> textfolder/timestamp.txt
+          echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
+          echo "Changed file(s): ${CHANGED_FILES}" >> textfolder/timestamp.txt
+          echo "Triggered at (IST): ${NOW}" >> textfolder/timestamp.txt
+          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
+          
+      - name: Commit changes
+        run: |
+          git config user.name "Ankit-Kumar-Bayer"
+          git config user.email "ankit.kumar9.ext@bayer.com"
+
+          git add textfolder/timestamp.txt
+          git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
+          git push
+
+  test:
+    name: Test
+    needs: [dev]
+    runs-on: ubuntu-latest
+   
+    environment: test
+    env:
+      Job_Var: "Job Variable"
+      
+
+    steps:
+      - uses: actions/checkout@v4
+
+      
+      - name: Variable Check
+        env:
+          Step_Var: "Step1 Variable"
+        run: |
+          echo "Var= $Global_Var"
+          echo "Var= $Job_Var"
+          echo "Var= $Step_Var"
+
+      - name: Print Test variables
+        run: |
+          echo "ENVIRONMENT = Test"
+          echo "Test_Variable 1 = ${{ vars.API_BASE1 }}"
+          echo "Test_Variable 2 = ${{ vars.API_BASE2 }}"
+          echo "Secret Key = ${{secrets.PASSKEY}}"
+
+      - name: Get Code
+        uses: actions/checkout@v3
+
+      # - name: Install NodeJS
+      #   uses: actions/setup-node@v3
+      #   with:
+      #     node-version: 24
+
+      # - name: Install dependencies
+      #   run: npm ci
+
+      # - name: Run Tests
+      #   run: npm test
+
+      
+    
+
+      #- name: Run App
+      #  run: npm start
+
+  dev:
+    name: DEV
+    runs-on: ubuntu-latest
+
+    environment: dev           
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print DEV variables
+        run: |
+          echo "ENVIRONMENT = DEV"
+          echo "DEV_Variable 1 = ${{ vars.API_BASE1 }}"
+          echo "DEV_Variable 2 = ${{ vars.API_BASE2 }}"
+          echo "Secret Key = ${{secrets.PASSKEY}}"
+
+  prod:
+    name: PROD
+    needs: [test, dev]
+    runs-on: ubuntu-latest
+
+    environment: prod           
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print PROD variables
+        run: |
+          echo "ENVIRONMENT = PROD"
+          echo "PROD_Variable 1 = ${{ vars.API_BASE1 }}"
+          echo "PROD_Variable 2 = ${{ vars.API_BASE2 }}"
+          echo "Secret Key = ${{secrets.PASSKEY}}"
+
