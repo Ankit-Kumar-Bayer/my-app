@@ -63,6 +63,51 @@ jobs:
           git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
           git push
 
+  build-approver:
+    name: Build approver
+    runs-on: ubuntu-latest
+
+    environment: prod_approval
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Request is sended
+        run: |
+          echo "Waiting for approver to approve this request"
+
+  
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: [ build-approver ]
+    environment: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      #- name: 
+  
+  
+  dev:
+    name: DEV
+    needs: [ build ]
+    runs-on: ubuntu-latest
+
+    environment: dev           
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print DEV variables
+        run: |
+          echo "ENVIRONMENT = DEV"
+          echo "DEV_Variable 1 = ${{ vars.API_BASE1 }}"
+          echo "DEV_Variable 2 = ${{ vars.API_BASE2 }}"
+          echo "Secret Key = ${{secrets.PASSKEY}}"
+
+  
+  
+  
   test:
     name: Test
     needs: [dev]
@@ -112,21 +157,7 @@ jobs:
       #- name: Run App
       #  run: npm start
 
-  dev:
-    name: DEV
-    runs-on: ubuntu-latest
-
-    environment: dev           
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Print DEV variables
-        run: |
-          echo "ENVIRONMENT = DEV"
-          echo "DEV_Variable 1 = ${{ vars.API_BASE1 }}"
-          echo "DEV_Variable 2 = ${{ vars.API_BASE2 }}"
-          echo "Secret Key = ${{secrets.PASSKEY}}"
-
+  
   prod:
     name: PROD
     needs: [test, dev]
