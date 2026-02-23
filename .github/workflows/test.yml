@@ -3,7 +3,12 @@ name: Test Project
 on:
   push:
   pull_request:
-    branches: [ main ]
+    branches: ['**']     # any target branch
+    paths: ['**']        # any files changed
+    types: [opened, synchronize, reopened, ready_for_review]
+
+
+
   workflow_dispatch:
 
   #MIN HOUR DAY MONTH WEEKDAY
