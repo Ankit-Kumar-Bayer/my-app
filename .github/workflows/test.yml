@@ -45,7 +45,7 @@ jobs:
 
       - name: Write timestamp and event info
         run: |
-          TZ="${Zone}"
+          export TZ="Asia/Kolkata"
           NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
           echo "--------------------------------------------------------" >> textfolder/timestamp.txt
           echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
