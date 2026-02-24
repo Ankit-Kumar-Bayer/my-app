@@ -103,7 +103,16 @@ jobs:
 
       - name: Build
         run: npm run build
-##
+
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          # path: apps/web/dist/**
+          # if-no-files-found: error
+
+
   
   
   dev:
