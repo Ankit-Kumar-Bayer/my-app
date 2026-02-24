@@ -107,10 +107,10 @@ jobs:
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        with:
-          name: build-artifact
-          path: "**"            # your build folder
-          destination-path: "**"
+        with: 
+          name: build-output
+          path: dist/**
+
 
 
 
