@@ -56,23 +56,23 @@ jobs:
           echo "Failed Jobs Count: $FAILED"
         
 
-      - name: Write timestamp and event info
-        run: |
-          export TZ="Asia/Kolkata"
-          NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
-          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
-          echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
-          echo "Repository: ${{ github.repository}}" >> textfolder/timestamp.txt
-          echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
-          echo "Changed file(s): ${CHANGED_FILES}" >> textfolder/timestamp.txt
-          echo "Triggered at (IST): ${NOW}" >> textfolder/timestamp.txt
-          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
+      # - name: Write timestamp and event info
+      #   run: |
+      #     export TZ="Asia/Kolkata"
+      #     NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+      #     echo "--------------------------------------------------------" >> textfolder/timestamp.txt
+      #     echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
+      #     echo "Repository: ${{ github.repository}}" >> textfolder/timestamp.txt
+      #     echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
+      #     echo "Changed file(s): ${CHANGED_FILES}" >> textfolder/timestamp.txt
+      #     echo "Triggered at (IST): ${NOW}" >> textfolder/timestamp.txt
+      #     echo "--------------------------------------------------------" >> textfolder/timestamp.txt
           
-      - name: Commit changes
-        run: |
-          git config user.name "Ankit-Kumar-Bayer"
-          git config user.email "ankit.kumar9.ext@bayer.com"
+      # - name: Commit changes
+      #   run: |
+      #     git config user.name "Ankit-Kumar-Bayer"
+      #     git config user.email "ankit.kumar9.ext@bayer.com"
 
-          git add textfolder/timestamp.txt
-          git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
-          git push
+      #     git add textfolder/timestamp.txt
+      #     git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
+      #     git push
