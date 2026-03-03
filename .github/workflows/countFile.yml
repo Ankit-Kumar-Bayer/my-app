@@ -1,78 +1,62 @@
-name: Count 
+name: Simple Weekly Pass/Fail Count
 
 on:
-  push:
-  pull_request:
-    branches: ['**']     # any target branch
-    paths: ['**']        # any files changed
-    types: [opened, synchronize, reopened, ready_for_review]
-
-
-
   workflow_dispatch:
 
-  #MIN HOUR DAY MONTH WEEKDAY
-  #12:00 IST → 06:30 UTC → cron: '30 6 * * *'
-  schedule:
-    # Daily at 09:00 IST (UTC+5:30) -> 03:30 UTC
-    - cron: '30 3 * * *'
-
-permissions:
-  contents: write
-
-env:
-  Global_Var: "Global Workflow Variable"
-
-
 jobs:
-  
-
-  fail-job-count:
+  count:
     runs-on: ubuntu-latest
-    env:
-      Zone: "Asia/Kolkata"
-
+    permissions:
+      actions: read
     steps:
-      - name: Checkout main branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Create folder
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Count pass/fail jobs (last 7 days)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          
-          if [ -d "textfolder" ]; then
-            echo "File and Folder Exist!"
-          else
-            mkdir -p textfolder
-            echo "This file contains zone time, date and Job"> textfolder/Count.txt
-            echo "File and Folder Created Successfully!"
-          fi
-          
-      - name: Failed Job Count
-        env: 
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          FAILED= $(gh api repos/${{github.repository }}/actions/runs \ --jq '.workflow_runs[] |select(.conclusion =="failure") | .id | wc -l)
+          DAYS=7
+          API="https://api.github.com"
+          CUTOFF=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
 
-          echo "Failed Jobs Count: $FAILED"
-        
+          pass=0
+          fail=0
 
-      # - name: Write timestamp and event info
-      #   run: |
-      #     export TZ="Asia/Kolkata"
-      #     NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
-      #     echo "--------------------------------------------------------" >> textfolder/timestamp.txt
-      #     echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
-      #     echo "Repository: ${{ github.repository}}" >> textfolder/timestamp.txt
-      #     echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
-      #     echo "Changed file(s): ${CHANGED_FILES}" >> textfolder/timestamp.txt
-      #     echo "Triggered at (IST): ${NOW}" >> textfolder/timestamp.txt
-      #     echo "--------------------------------------------------------" >> textfolder/timestamp.txt
-          
-      # - name: Commit changes
-      #   run: |
-      #     git config user.name "Ankit-Kumar-Bayer"
-      #     git config user.email "ankit.kumar9.ext@bayer.com"
+          page=1
+          while :; do
+            runs=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "$API/repos/$REPO/actions/runs?per_page=100&page=$page&status=completed")
 
-      #     git add textfolder/timestamp.txt
-      #     git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
-      #     git push
+            count=$(echo "$runs" | jq '.workflow_runs | length')
+            [ "$count" -eq 0 ] && break
+
+            echo "$runs" | jq -c '.workflow_runs[]' | while read r; do
+              created=$(echo "$r" | jq -r '.created_at')
+              run_id=$(echo "$r" | jq -r '.id')
+
+              # Stop if older than cutoff
+              if [[ "$created" < "$CUTOFF" ]]; then
+                exit 0
+              fi
+
+              jobs=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                "$API/repos/$REPO/actions/runs/$run_id/jobs?per_page=100")
+
+              p=$(echo "$jobs" | jq '[.jobs[].conclusion] | map(select(.=="success")) | length')
+              f=$(echo "$jobs" | jq '[.jobs[].conclusion] | map(select(.=="failure")) | length')
+
+              pass=$((pass + p))
+              fail=$((fail + f))
+            done || break
+
+            page=$((page+1))
+          done
+
+          echo "---------------------------------"
+          echo "Pass jobs in last 7 days : $pass"
+          echo "Fail jobs in last 7 days : $fail"
+          echo "---------------------------------"
