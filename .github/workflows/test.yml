@@ -207,9 +207,8 @@ jobs:
   count:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       actions: read
-
+      contents: read
     steps:
       - name: Count failed jobs in past N days
         env:
