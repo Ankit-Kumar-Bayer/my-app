@@ -174,3 +174,14 @@ jobs:
             echo
             echo "- Time window start (UTC): $(date -u -d "${DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  Check:
+    runs-on: ubuntu-latest
+    env:
+      DAYS: "7"                    # default; can be overridden via dispatch input
+      FAIL_CONCLUSIONS: "failure"  # comma-separated set for FAILED
+      PASS_CONCLUSIONS: "success"  # comma-separated set for PASSED
+      RUN_STATUSES: "queued,in_progress"  # which job statuses count as RUNNING
+    steps:
+      - name: Override DAYS from workflow_dispatch
+        if: ${{ gi
