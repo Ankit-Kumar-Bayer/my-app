@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: "Lookback window in days (default: 7)"
+        description: "Days in the past to look back"
         required: false
         default: "7"
 
@@ -205,9 +205,6 @@ jobs:
 
   count:
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
     steps:
       - name: Count failed jobs in past N days
         env:
