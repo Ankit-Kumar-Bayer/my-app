@@ -1,62 +1,109 @@
-name: Simple Weekly Pass/Fail Count
+name: Count failed jobs (last 7 days)
 
 on:
   workflow_dispatch:
+  schedule:
+    # Every Monday 00:15 UTC (adjust as you like)
+    - cron: "15 0 * * 1"
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
-  count:
+  count-failed-jobs:
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
+    env:
+      DAYS: "7"
+      # Comma-separated list of job conclusions to count as "failed".
+      # Default is only "failure". You can extend to include "timed_out" etc.
+      FAIL_CONCLUSIONS: "failure"
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Count pass/fail jobs (last 7 days)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
+      - name: Ensure jq is available
         run: |
-          DAYS=7
-          API="https://api.github.com"
-          CUTOFF=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          set -e
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
 
-          pass=0
-          fail=0
+      - name: Count failed jobs in the last ${{ env.DAYS }} days
+        id: count
+        env:
+          API_URL: ${{ github.api_url }}   # Works for GHES and github.com
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          # ^ Split "owner/repo" into parts via Bash parameter expansion. [6](https://www.cazzulino.com/github-actions-repository.html)
+
+          TOKEN="${GITHUB_TOKEN}"
+          PER_PAGE=100
+          # Use date-only value for 'created' filter (supported by the API)
+          START_DATE="$(date -u -d "${DAYS} days ago" +%Y-%m-%d)"
+
+          echo "Repository: $OWNER/$REPO"
+          echo "Window start (UTC): $START_DATE"
+          echo "Counting these conclusions as failures: ${FAIL_CONCLUSIONS}"
+
+          failed_total=0
+          runs_processed=0
           page=1
+
           while :; do
-            runs=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-              "$API/repos/$REPO/actions/runs?per_page=100&page=$page&status=completed")
+            # List workflow runs created since START_DATE, limited to completed ones.
+            # API docs: List workflow runs + 'created' filter supported. [3](https://docs.github.com/en/rest/actions/workflow-runs)[4](https://github.blog/changelog/2021-09-02-github-actions-filter-workflow-runs-by-created-date/)
+            runs_resp="$(curl -fsSL \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API_URL}/repos/${OWNER}/${REPO}/actions/runs?status=completed&created=>=${START_DATE}&per_page=${PER_PAGE}&page=${page}")"
 
-            count=$(echo "$runs" | jq '.workflow_runs | length')
-            [ "$count" -eq 0 ] && break
+            run_ids="$(jq -r '.workflow_runs[]?.id' <<<"$runs_resp")"
+            [[ -z "${run_ids}" ]] && break
 
-            echo "$runs" | jq -c '.workflow_runs[]' | while read r; do
-              created=$(echo "$r" | jq -r '.created_at')
-              run_id=$(echo "$r" | jq -r '.id')
+            for run_id in $run_ids; do
+              runs_processed=$((runs_processed+1))
+              jpage=1
+              while :; do
+                # List jobs for a workflow run (paginated). [5](https://docs.github.com/en/rest/actions/workflow-jobs)
+                jobs_resp="$(curl -fsSL \
+                  -H "Authorization: Bearer ${TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "${API_URL}/repos/${OWNER}/${REPO}/actions/runs/${run_id}/jobs?per_page=${PER_PAGE}&page=${jpage}")"
 
-              # Stop if older than cutoff
-              if [[ "$created" < "$CUTOFF" ]]; then
-                exit 0
-              fi
+                job_count="$(jq '.jobs | length' <<<"$jobs_resp")"
+                [[ "${job_count}" -eq 0 ]] && break
 
-              jobs=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                "$API/repos/$REPO/actions/runs/$run_id/jobs?per_page=100")
+                # Build jq predicate from FAIL_CONCLUSIONS (e.g., "failure,timed_out")
+                IFS=',' read -r -a concl <<<"${FAIL_CONCLUSIONS}"
+                jq_filter=$(printf '(%s)' "$(printf ' . == "%s" or' "${concl[@]}" | sed 's/ or$//')")
 
-              p=$(echo "$jobs" | jq '[.jobs[].conclusion] | map(select(.=="success")) | length')
-              f=$(echo "$jobs" | jq '[.jobs[].conclusion] | map(select(.=="failure")) | length')
+                failures="$(jq "[.jobs[] | select(.conclusion != null) | .conclusion | select(${jq_filter})] | length" <<<"$jobs_resp")"
+                failed_total=$((failed_total + failures))
 
-              pass=$((pass + p))
-              fail=$((fail + f))
-            done || break
+                jpage=$((jpage+1))
+              done
+            done
 
             page=$((page+1))
           done
 
-          echo "---------------------------------"
-          echo "Pass jobs in last 7 days : $pass"
-          echo "Fail jobs in last 7 days : $fail"
-          echo "---------------------------------"
+          echo "FAILED_JOBS=${failed_total}" | tee -a "$GITHUB_ENV"
+          echo "RUNS_PROCESSED=${runs_processed}" | tee -a "$GITHUB_ENV"
+
+      - name: Publish summary
+        if: always()
+        run: |
+          {
+            echo "## Failed jobs in the last ${DAYS} days"
+            echo
+            echo "- Repository: ${GITHUB_REPOSITORY}"
+            echo "- Workflow runs processed: ${RUNS_PROCESSED}"
+            echo "- Failed jobs counted (conclusions = ${FAIL_CONCLUSIONS}): **${FAILED_JOBS}**"
+            echo "- Time window start (UTC): $(date -u -d "${DAYS} days ago" +%Y-%m-%d)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Writes markdown to the run summary. [1](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands)[2](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/)
