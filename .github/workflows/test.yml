@@ -21,9 +21,6 @@ on:
     # Daily at 09:00 IST (UTC+5:30) -> 03:30 UTC
     - cron: '30 3 * * *'
 
-permissions:
-  contents: write
-  actions: write
 
 env:
   Global_Var: "Global Workflow Variable"
@@ -33,6 +30,10 @@ jobs:
 
   ZODA:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
     env:
       Zone: "Asia/Kolkata"
 
@@ -205,6 +206,10 @@ jobs:
 
   count:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
     steps:
       - name: Count failed jobs in past N days
         env:
