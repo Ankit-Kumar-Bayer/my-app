@@ -1,65 +1,110 @@
-name: Create folder & file
+name: Count Failed Jobs (Bash Loop)
 
 on:
   workflow_dispatch:
+    inputs:
+      days:
+        description: "Days in the past to look back"
+        required: false
+        default: "7"
+  schedule:
+    - cron: "0 8 * * *"
 
-permissions:
-  contents: write
 jobs:
-  create-folder:
+  count:
     runs-on: ubuntu-latest
-
+    permissions:
+      actions: read
+      contents: read
     steps:
-      - name: Checkout main branch
-        uses: actions/checkout@v4
-
-      - name: Create folder
+      - name: Count failed jobs in past N days
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYS: ${{ inputs.days || '7' }}
         run: |
-          mkdir -p textfolder
-          echo "This file contains zone time and date of push & pull"> textfolder/timestamp.txt
-          
+          set -euo pipefail
 
-      - name: Commit changes
-        run: |
-          git config user.name "Ankit-Kumar-Bayer"
-          git config user.email "ankit.kumar9.ext@bayer.com"
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
 
-          git add textfolder/timestamp.txt
-          git commit -m "Create folder textfolder in my-app"
-          git push
-          
-  write-timestamp:
-    runs-on: ubuntu-latest
-    
-    env:
-      Zone: "Asia/Kolkata"
-      
-    steps:
-      
-      - name: Checkout repository
-        uses: actions/checkout@v4
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
 
-      - name: Write timestamp and event info
-        run: |
-          export TZ="${Zone}"
-          NOW="$(date '+%Y-%m-%d %H:%M:%S %Z')"
-          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
-          echo "Event: ${{ github.event_name}}" >> textfolder/timestamp.txt
-          echo "Repository: ${{ github.repository}}" >> textfolder/timestamp.txt
-          echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
-          echo "Branch: ${{ github.ref_name}}" >> textfolder/timestamp.txt
-          echo "Triggered at (IST): ${NOW}" >> textfolder/timestamp.txt
-          echo "--------------------------------------------------------" >> textfolder/timestamp.txt
-          
-      - name: Commit changes
-        run: |
-          git config user.name "Ankit-Kumar-Bayer"
-          git config user.email "ankit.kumar9.ext@bayer.com"
+          BASE="https://api.github.com"
+          NOW_UTC_ISO="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          SINCE_UTC_ISO="$(date -u -d "${DAYS} days ago" +"%Y-%m-%dT%H:%M:%SZ")"
 
-          git add textfolder/timestamp.txt
-          git commit -m "Update timestamp from ${{github.event_name}}" || echo "No Commit"
-          git push
-          
-        
+          failed_jobs=0
+          total_jobs=0
+          runs_checked=0
 
+          per_page=100
+          page=1
 
+          auth_header="Authorization: Bearer ${GITHUB_TOKEN}"
+          accept_header="Accept: application/vnd.github+json"
+          api_ver_header="X-GitHub-Api-Version: 2022-11-28"
+          iso_ge() { [[ "$1" > "$2" || "$1" == "$2" ]]; }
+
+          while true; do
+            runs_url="${BASE}/repos/${OWNER}/${REPO}/actions/runs?status=completed&per_page=${per_page}&page=${page}"
+            runs_json="$(curl -sS -H "$accept_header" -H "$auth_header" -H "$api_ver_header" "$runs_url")"
+            runs_count="$(echo "$runs_json" | jq '.workflow_runs | length')"
+            if [[ "$runs_count" -eq 0 ]]; then
+              break
+            fi
+
+            newest_on_page="$(echo "$runs_json" | jq -r '.workflow_runs[0].created_at')"
+
+            mapfile -t run_ids_in_window < <(
+              echo "$runs_json" \
+              | jq -r --arg since "$SINCE_UTC_ISO" --arg now "$NOW_UTC_ISO" '
+                  .workflow_runs[]
+                  | select(.created_at >= $since and .created_at <= $now)
+                  | .id
+                '
+            )
+
+            for run_id in "${run_ids_in_window[@]}"; do
+              (( runs_checked += 1 ))
+              job_page=1
+              while true; do
+                jobs_url="${BASE}/repos/${OWNER}/${REPO}/actions/runs/${run_id}/jobs?per_page=100&page=${job_page}"
+                jobs_json="$(curl -sS -H "$accept_header" -H "$auth_header" -H "$api_ver_header" "$jobs_url")"
+                jobs_len="$(echo "$jobs_json" | jq '.jobs | length')"
+                if [[ "$jobs_len" -eq 0 ]]; then
+                  break
+                fi
+                page_total="$(echo "$jobs_json" | jq '[.jobs[]] | length')"
+                page_failed="$(echo "$jobs_json" | jq '[.jobs[] | select(.conclusion=="failure")] | length')"
+                (( total_jobs += page_total ))
+                (( failed_jobs += page_failed ))
+
+                if [[ "$jobs_len" -lt 100 ]]; then
+                  break
+                fi
+                (( job_page += 1 ))
+                sleep 0.1
+              done
+            done
+
+            if ! iso_ge "$newest_on_page" "$SINCE_UTC_ISO"; then
+              break
+            fi
+            (( page += 1 ))
+          done
+
+          echo "Failed job count (last ${DAYS} days): ${failed_jobs}"
+          echo "Total job count:  ${total_jobs}"
+          echo "Runs analyzed:    ${runs_checked}"
+          echo "Window: ${SINCE_UTC_ISO} -> ${NOW_UTC_ISO}"
+
+          {
+            echo "## Failed Jobs - Past ${DAYS} Days"
+            echo "- **Failed jobs**: ${failed_jobs}"
+            echo "- **Total jobs**:  ${total_jobs}"
+            echo "- **Runs analyzed**: ${runs_checked}"
+            echo "- **Window**: ${SINCE_UTC_ISO} → ${NOW_UTC_ISO}"
+          } >> "$GITHUB_STEP_SUMMARY"
