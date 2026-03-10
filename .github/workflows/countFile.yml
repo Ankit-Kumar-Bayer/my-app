@@ -1,9 +1,14 @@
-name: Count failed jobs (last 7 days)
+name: Count failed jobs (last N days)
 
 on:
   workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback window in days (default: 7)"
+        required: false
+        default: "7"
   schedule:
-    # Every Monday 00:15 UTC (adjust as you like)
+    # Every Monday 00:15 UTC
     - cron: "15 0 * * 1"
 
 permissions:
@@ -14,11 +19,16 @@ jobs:
   count-failed-jobs:
     runs-on: ubuntu-latest
     env:
+      # Default window; can be overridden via workflow_dispatch input
       DAYS: "7"
-      # Comma-separated list of job conclusions to count as "failed".
-      # Default is only "failure". You can extend to include "timed_out" etc.
+      # Comma-separated job conclusions to count as "failed"
+      # e.g. "failure,timed_out"
       FAIL_CONCLUSIONS: "failure"
     steps:
+      - name: Override DAYS from workflow_dispatch (if provided)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.days != '' }}
+        run: echo "DAYS=${{ github.event.inputs.days }}" >> "$GITHUB_ENV"
+
       - name: Ensure jq is available
         run: |
           set -e
@@ -27,62 +37,102 @@ jobs:
             sudo apt-get install -y jq
           fi
 
-      - name: Count failed jobs in the last ${{ env.DAYS }} days
+      - name: Count failed jobs in the last ${{ env.DAYS }} days (robust)
         id: count
         env:
-          API_URL: ${{ github.api_url }}   # Works for GHES and github.com
+          API_URL: ${{ github.api_url }}     # Works for GHES and github.com
+          STATUS_FILTER: "completed"          # Set to "" to include all run statuses
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
 
           OWNER="${GITHUB_REPOSITORY%/*}"
           REPO="${GITHUB_REPOSITORY#*/}"
-          # ^ Split "owner/repo" into parts via Bash parameter expansion. [6](https://www.cazzulino.com/github-actions-repository.html)
 
           TOKEN="${GITHUB_TOKEN}"
           PER_PAGE=100
-          # Use date-only value for 'created' filter (supported by the API)
-          START_DATE="$(date -u -d "${DAYS} days ago" +%Y-%m-%d)"
+
+          # Full ISO‑8601 UTC timestamp to reduce ambiguity for the 'created' filter
+          START_ISO="$(date -u -d "${DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
           echo "Repository: $OWNER/$REPO"
-          echo "Window start (UTC): $START_DATE"
+          echo "Window start (UTC): $START_ISO"
           echo "Counting these conclusions as failures: ${FAIL_CONCLUSIONS}"
+
+          # Helper to call GitHub API with headers+status handling
+          gh_api() {
+            local url="$1"
+            local body status
+            # Write headers to stderr for visibility
+            body="$(curl -sS -w "\n%{http_code}" -D >(cat >&2) \
+                    -H "Authorization: Bearer ${TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    "$url")" || { echo "::error::curl failed for $url"; exit 1; }
+
+            status="${body##*$'\n'}"
+            body="${body%$'\n'"$status"}"
+
+            if [[ "$status" != 2* ]]; then
+              echo "::error::GitHub API ${status} for ${url}"
+              if echo "$body" | jq -e . >/dev/null 2>&1; then
+                echo "API error payload:" >&2
+                echo "$body" | jq . >&2 || true
+              else
+                echo "API raw body:" >&2
+                echo "$body" >&2
+              fi
+              exit 1
+            fi
+            printf "%s" "$body"
+          }
+
+          # Build runs URL with 'created' filter and optional status
+          base_runs_url="${API_URL}/repos/${OWNER}/${REPO}/actions/runs?created=>=${START_ISO}&per_page=${PER_PAGE}"
+          if [[ -n "${STATUS_FILTER}" ]]; then
+            base_runs_url="${base_runs_url}&status=${STATUS_FILTER}"
+          fi
 
           failed_total=0
           runs_processed=0
           page=1
 
           while :; do
-            # List workflow runs created since START_DATE, limited to completed ones.
-            # API docs: List workflow runs + 'created' filter supported. [3](https://docs.github.com/en/rest/actions/workflow-runs)[4](https://github.blog/changelog/2021-09-02-github-actions-filter-workflow-runs-by-created-date/)
-            runs_resp="$(curl -fsSL \
-              -H "Authorization: Bearer ${TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${API_URL}/repos/${OWNER}/${REPO}/actions/runs?status=completed&created=>=${START_DATE}&per_page=${PER_PAGE}&page=${page}")"
+            runs_url="${base_runs_url}&page=${page}"
+            runs_resp="$(gh_api "$runs_url")"
 
-            run_ids="$(jq -r '.workflow_runs[]?.id' <<<"$runs_resp")"
-            [[ -z "${run_ids}" ]] && break
+            # Verify expected structure
+            if ! echo "$runs_resp" | jq -e '.workflow_runs' >/dev/null 2>&1; then
+              echo "::warning::Unexpected runs response on page ${page}; stopping pagination"
+              break
+            fi
 
-            for run_id in $run_ids; do
+            # Collect run IDs
+            mapfile -t run_ids < <(echo "$runs_resp" | jq -r '.workflow_runs[]?.id // empty')
+            [[ ${#run_ids[@]} -eq 0 ]] && break
+
+            for run_id in "${run_ids[@]}"; do
               runs_processed=$((runs_processed+1))
               jpage=1
               while :; do
-                # List jobs for a workflow run (paginated). [5](https://docs.github.com/en/rest/actions/workflow-jobs)
-                jobs_resp="$(curl -fsSL \
-                  -H "Authorization: Bearer ${TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
-                  -H "X-GitHub-Api-Version: 2022-11-28" \
-                  "${API_URL}/repos/${OWNER}/${REPO}/actions/runs/${run_id}/jobs?per_page=${PER_PAGE}&page=${jpage}")"
+                jobs_url="${API_URL}/repos/${OWNER}/${REPO}/actions/runs/${run_id}/jobs?per_page=${PER_PAGE}&page=${jpage}"
+                jobs_resp="$(gh_api "$jobs_url")"
 
-                job_count="$(jq '.jobs | length' <<<"$jobs_resp")"
-                [[ "${job_count}" -eq 0 ]] && break
+                if ! echo "$jobs_resp" | jq -e '.jobs' >/dev/null 2>&1; then
+                  echo "::warning::Unexpected jobs response for run ${run_id}, page ${jpage}; break"
+                  break
+                fi
+
+                job_len="$(echo "$jobs_resp" | jq '.jobs | length')"
+                [[ "$job_len" -eq 0 ]] && break
 
                 # Build jq predicate from FAIL_CONCLUSIONS (e.g., "failure,timed_out")
                 IFS=',' read -r -a concl <<<"${FAIL_CONCLUSIONS}"
                 jq_filter=$(printf '(%s)' "$(printf ' . == "%s" or' "${concl[@]}" | sed 's/ or$//')")
 
-                failures="$(jq "[.jobs[] | select(.conclusion != null) | .conclusion | select(${jq_filter})] | length" <<<"$jobs_resp")"
+                failures="$(echo "$jobs_resp" \
+                  | jq "[.jobs[] | select(.conclusion != null) | .conclusion | select(${jq_filter})] | length")"
                 failed_total=$((failed_total + failures))
 
                 jpage=$((jpage+1))
@@ -104,6 +154,5 @@ jobs:
             echo "- Repository: ${GITHUB_REPOSITORY}"
             echo "- Workflow runs processed: ${RUNS_PROCESSED}"
             echo "- Failed jobs counted (conclusions = ${FAIL_CONCLUSIONS}): **${FAILED_JOBS}**"
-            echo "- Time window start (UTC): $(date -u -d "${DAYS} days ago" +%Y-%m-%d)"
+            echo "- Time window start (UTC): $(date -u -d "${DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_STEP_SUMMARY"
-          # Writes markdown to the run summary. [1](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands)[2](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/)
