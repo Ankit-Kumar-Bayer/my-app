@@ -7,8 +7,6 @@ on:
         description: "Days in the past to look back"
         required: false
         default: "7"
-  schedule:
-    - cron: "0 8 * * *"
 
 jobs:
   count:
