@@ -7,9 +7,7 @@ on:
         description: "Lookback window in days (default: 7)"
         required: false
         default: "7"
-  schedule:
-    # Every Monday 00:15 UTC
-    - cron: "15 0 * * 1"
+ 
 
 permissions:
   contents: read
