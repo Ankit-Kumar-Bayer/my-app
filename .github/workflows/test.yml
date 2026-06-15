@@ -15,11 +15,7 @@ on:
         default: "7"
 
 
-  #MIN HOUR DAY MONTH WEEKDAY
-  #12:00 IST → 06:30 UTC → cron: '30 6 * * *'
-  schedule:
-    # Daily at 09:00 IST (UTC+5:30) -> 03:30 UTC
-    - cron: '30 3 * * *'
+ 
 
 
 env:
